@@ -33,3 +33,22 @@ favshop.co.in/
 ├── docker-compose.yml
 ├── .gitignore
 └── README.md
+<!-- DEPLOYMENT ARCHITECTURE -->
+                    GitHub
+                       │
+                 CI/CD Pipeline
+                       │
+              ┌────────┴────────┐
+              ↓                 ↓
+          Angular             FastAPI
+          Frontend            Backend
+              │                 │
+              │            ┌────┴─────┐
+              │            │          │
+              │          RAG       AI Model
+              │            │          │
+              │          FAISS    Azure OpenAI
+              │
+              └──────────────┬─────────────
+                             ↓
+                         Favshop
