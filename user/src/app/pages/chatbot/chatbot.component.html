@@ -1,0 +1,91 @@
+<!-- Floating Chat Button -->
+
+<button
+  class="chat-button"
+  (click)="toggleChat()"
+  aria-label="Open chatbot"
+>
+  <span *ngIf="!isOpen">💬</span>
+  <span *ngIf="isOpen">✕</span>
+</button>
+
+
+<!-- Chat Window -->
+
+<div
+  class="chat-window"
+  *ngIf="isOpen"
+>
+
+  <!-- Header -->
+
+<div class="chat-header">
+
+  <div class="chat-avatar">
+    🤖
+  </div>
+
+  <div class="chat-info">
+    <strong>AI Mitra</strong>
+    <small>Ask me anything</small>
+  </div>
+
+  <button
+    class="close-button"
+    (click)="toggleChat()"
+  >
+    ✕
+  </button>
+
+</div>
+
+
+  <!-- Messages -->
+
+  <div class="chat-messages">
+
+    <div
+      *ngFor="let message of messages"
+      class="message"
+      [class.user-message]="message.role === 'user'"
+      [class.bot-message]="message.role === 'assistant'"
+    >
+
+      {{ message.content }}
+
+    </div>
+
+
+    <!-- Loading -->
+
+    <div
+      class="message bot-message"
+      *ngIf="loading"
+    >
+      Typing...
+    </div>
+
+  </div>
+
+
+  <!-- Input -->
+
+  <div class="chat-input">
+
+    <textarea
+      [(ngModel)]="question"
+      placeholder="Ask a question..."
+      rows="1"
+      (keydown)="onEnter($event)"
+    ></textarea>
+
+    <button
+      (click)="sendMessage()"
+      [disabled]="loading || !question.trim()"
+    >
+      ➤
+    </button>
+
+  </div>
+
+</div>
