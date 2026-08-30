@@ -25,14 +25,23 @@ favshop.co.in/
     └── seed.py
 <!-- Dockerize ARCHITECTURE -->
 favshop.co.in/
-│
-├── admin/
-├── user/
 ├── backend/
+│   ├── Dockerfile
+│   ├── requirements-docker.txt
+│   ├── .dockerignore
+│   └── ...
 │
-├── docker-compose.yml
-├── .gitignore
-└── README.md
+├── user/
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   ├── .dockerignore
+│   └── ...
+│
+└── admin/
+    ├── Dockerfile
+    ├── nginx.conf
+    ├── .dockerignore
+    └── ...
 <!-- DEPLOYMENT ARCHITECTURE -->
                     GitHub
                        │
