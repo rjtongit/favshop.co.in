@@ -1,0 +1,41 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Tests/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+# Generated files
+dist/
+build/
+
+# Local RAG indexes
+faiss_index/
+vectorstore/
+chroma/
+
+# OS
+.DS_Store
+Thumbs.db

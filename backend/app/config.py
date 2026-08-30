@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Hugging Face API Key
     huggingface_api_key: str = ""
-
+    groq_api_key: str = ""
     # Legacy Razorpay settings
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""

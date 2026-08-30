@@ -14,6 +14,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from huggingface_hub import InferenceClient
+from groq import Groq
 from .rag import search_documents
 
 from .config import settings
@@ -58,8 +59,8 @@ class ChatRequest(BaseModel):
     chatUser: str
     askedQuestion: str
 
-client = InferenceClient(
-    api_key=settings.huggingface_api_key
+client = Groq(
+    api_key=settings.groq_api_key
 )
 
 
@@ -168,6 +169,9 @@ User question:
                 "content": router_prompt
             }
         ],
+        temperature=1,
+        max_completion_tokens=2048,
+        reasoning_effort="medium",
     )
 
     category = response.choices[0].message.content.strip().lower()
