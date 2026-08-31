@@ -16,6 +16,21 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
     restart: unless-stopped
 
 
@@ -30,7 +45,8 @@ services:
       - "4200:80"
 
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
     restart: unless-stopped
 
@@ -46,6 +62,58 @@ services:
       - "4300:80"
 
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
     restart: unless-stopped
+
+
+  nginx:
+    image: nginx:alpine
+
+    container_name: favshop-nginx-container
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    depends_on:
+      backend:
+        condition: service_healthy
+      user:
+        condition: service_started
+      admin:
+        condition: service_started
+
+    restart: unless-stopped
+
+
+  mysql:
+    image: mysql:8.0
+
+    container_name: favshop-mysql-container
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+
+    ports:
+      - "3306:3306"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    restart: unless-stopped
+
+
+volumes:
+  mysql_data:
