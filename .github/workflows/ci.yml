@@ -15,8 +15,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Create CI environment files
+        run: |
+          echo "MYSQL_ROOT_PASSWORD=ci_password" > .env
+          echo "MYSQL_DATABASE=favshop_fastapi" >> .env
+          touch backend/.env
 
       - name: Validate Docker Compose
         run: docker compose config
