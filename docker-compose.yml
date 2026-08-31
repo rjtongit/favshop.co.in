@@ -1,0 +1,51 @@
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    container_name: favshop-api-container
+
+    env_file:
+      - ./backend/.env
+
+    ports:
+      - "8080:8080"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    restart: unless-stopped
+
+
+  user:
+    build:
+      context: ./user
+      dockerfile: Dockerfile
+
+    container_name: favshop-user-container
+
+    ports:
+      - "4200:80"
+
+    depends_on:
+      - backend
+
+    restart: unless-stopped
+
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+
+    container_name: favshop-admin-container
+
+    ports:
+      - "4300:80"
+
+    depends_on:
+      - backend
+
+    restart: unless-stopped
