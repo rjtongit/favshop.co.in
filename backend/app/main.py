@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from huggingface_hub import InferenceClient
 from groq import Groq
 from .rag import search_documents
-
+from .web_search import search_web
 from .config import settings
 from .db import Base, engine, get_db
 from .models import User, Category, Product
@@ -135,31 +135,31 @@ def chat(request: ChatRequest):
 def classify_question(question: str):
 
     router_prompt = f"""
-Classify the following user question into exactly ONE category.
+    Classify the following user question into exactly ONE category.
 
-Categories:
+    Categories:
 
-company
-- Questions about our organization, employees, company policies,
-  employee portal, HR rules, internal procedures, etc.
+    company
+    - Questions about our organization, employees, company policies,
+    employee portal, HR rules, internal procedures, etc.
 
-current
-- Questions requiring current or live information,
-  such as current politicians, current weather, today's news,
-  current prices, current events, etc.
+    current
+    - Questions requiring current or live information,
+    such as current politicians, current weather, today's news,
+    current prices, current events, etc.
 
-general
-- General knowledge questions that don't require company information
-  or current/live information.
+    general
+    - General knowledge questions that don't require company information
+    or current/live information.
 
-Return ONLY one word:
-company
-current
-general
+    Return ONLY one word:
+    company
+    current
+    general
 
-User question:
-{question}
-"""
+    User question:
+    {question}
+    """
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -190,25 +190,25 @@ def answer_from_rag(question: str):
     )
 
     prompt = f"""
-You are an organizational assistant.
+    You are an organizational assistant.
 
-Answer the question using ONLY the company
-information provided below.
+    Answer the question using ONLY the company
+    information provided below.
 
-For each piece of information, the source
-document and page number are provided.
+    For each piece of information, the source
+    document and page number are provided.
 
-Company information:
+    Company information:
 
-{context}
+    {context}
 
-User question:
+    User question:
 
-{question}
+    {question}
 
-If the information is not available,
-say that you don't have enough information.
-"""
+    If the information is not available,
+    say that you don't have enough information.
+    """
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -238,8 +238,67 @@ def answer_general(question: str):
 
 def answer_current(question: str):
 
-    return "Current information requires a web search API."
+    # 1. Search the web
+    web_results = search_web(question)
 
+    if not web_results:
+        return "I could not find relevant information on the web."
+
+    # 2. Build context from Tavily results
+    context_parts = []
+
+    for result in web_results:
+
+        title = result.get("title", "")
+        url = result.get("url", "")
+        content = result.get("content", "")
+
+        context_parts.append(
+            f"Title: {title}\n"
+            f"URL: {url}\n"
+            f"Content: {content}"
+        )
+
+    context = "\n\n".join(context_parts)
+
+    # 3. Send retrieved information to the LLM
+    prompt = f"""
+    You are a helpful assistant.
+
+    Answer the user's question using ONLY
+    the web information provided below.
+
+    WEB INFORMATION:
+
+    {context}
+
+    USER QUESTION:
+
+    {question}
+
+    Instructions:
+
+    - Use the web information provided.
+    - Do not invent facts.
+    - If the information is insufficient, say
+    that you don't have enough information.
+    - Give a clear and concise answer.
+    """
+
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=1,
+        max_completion_tokens=2048,
+        reasoning_effort="medium",
+    )
+
+    return response.choices[0].message.content
 
 @app.post("/api/auth/register")
 def register(x: Register, db: Session = Depends(get_db)):

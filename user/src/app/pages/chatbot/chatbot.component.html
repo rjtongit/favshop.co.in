@@ -50,9 +50,13 @@
       [class.user-message]="message.role === 'user'"
       [class.bot-message]="message.role === 'assistant'"
     >
+      <ng-container *ngIf="message.role === 'assistant'; else userMessage">
+        <div [innerHTML]="renderMarkdown(message.content)"></div>
+      </ng-container>
 
-      {{ message.content }}
-
+      <ng-template #userMessage>
+        {{ message.content }}
+      </ng-template>
     </div>
 
 

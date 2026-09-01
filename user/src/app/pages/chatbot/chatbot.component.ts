@@ -5,7 +5,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { API } from '../../core/api';
-
+import { marked } from 'marked';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
@@ -22,7 +22,7 @@ interface Message {
   styleUrls: ['./chatbot.component.css']
 })
 export class ChatbotComponent {
-
+  
   isOpen = false;
   question = '';
   loading = false;
@@ -100,5 +100,8 @@ export class ChatbotComponent {
 
       this.sendMessage();
     }
+  }
+  renderMarkdown(content: string): string {
+    return marked.parse(content) as string;
   }
 }
