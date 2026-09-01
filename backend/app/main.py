@@ -182,13 +182,21 @@ def answer_from_rag(question: str):
 
     relevant_chunks = search_documents(question)
 
-    context = "\n\n".join(relevant_chunks)
+    context = "\n\n".join(
+        f"Source: {chunk['source']}\n"
+        f"Page: {chunk['page']}\n"
+        f"Content: {chunk['text']}"
+        for chunk in relevant_chunks
+    )
 
     prompt = f"""
 You are an organizational assistant.
 
 Answer the question using ONLY the company
 information provided below.
+
+For each piece of information, the source
+document and page number are provided.
 
 Company information:
 
