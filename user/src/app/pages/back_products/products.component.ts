@@ -44,7 +44,7 @@ template:`
   <div class="product-grid" *ngIf="!loading">
     <mat-card class="product-card" *ngFor="let p of products"
       ><a [routerLink]="['/products',p.id]"
-        ><div class="product-image"><img *ngIf="p.image" [src]="p.image" [alt]="p.name" loading="lazy"><span *ngIf="!p.image">🪔</span></div></a
+        ><div class="product-image">🪔</div></a
       ><mat-card-content
         ><small>DEVOTIONAL</small>
         <h3>{{p.name}}</h3>

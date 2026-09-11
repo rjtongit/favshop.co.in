@@ -38,7 +38,6 @@ class Product(Base):
     price:Mapped[float]=mapped_column(Numeric(10,2))
     discount_price:Mapped[float|None]=mapped_column(Numeric(10,2),nullable=True)
     stock:Mapped[int]=mapped_column(Integer,default=0)
-    image:Mapped[str|None]=mapped_column(String(500),nullable=True)
     featured:Mapped[bool]=mapped_column(Boolean,default=False)
     status:Mapped[bool]=mapped_column(Boolean,default=True)
     created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)

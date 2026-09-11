@@ -3,15 +3,12 @@ from datetime import datetime, timedelta
 import hashlib
 import hmac
 import json
-import uuid
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
@@ -23,16 +20,6 @@ from .web_search import search_web
 from .config import settings
 from .db import Base, engine, get_db
 from .models import User, Category, Product
-from .auth import get_current_user, get_current_user_optional, require_admin
-import shutil
-import os
-from app.schemas.sales import SalesQuestion
-from app.services.sales_service import (
-    load_excel,
-    get_schema,
-    analyze_sales
-)
-from app.services.llm_service import understand_question
 
 Base.metadata.create_all(engine)
 
@@ -44,66 +31,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------------------------------------------------------------------------
-# Uploaded product images
-# ---------------------------------------------------------------------------
-# Files live on disk under app/uploads/products/ (mounted as a Docker volume
-# in docker-compose.yml, same pattern as vector_store, so uploads survive
-# `docker compose up -d --build`). They're served back out at /uploads/...
-UPLOAD_ROOT = Path(__file__).resolve().parent / "uploads"
-PRODUCT_UPLOAD_DIR = UPLOAD_ROOT / "products"
-PRODUCT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT)), name="uploads")
-
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
-
-# Sniffed from the file's actual bytes -- never trust the client-supplied
-# filename or Content-Type for this decision.
-_IMAGE_MAGIC_NUMBERS: dict[bytes, tuple[str, str]] = {
-    b"\xff\xd8\xff": ("jpg", "image/jpeg"),
-    b"\x89PNG\r\n\x1a\n": ("png", "image/png"),
-    b"GIF87a": ("gif", "image/gif"),
-    b"GIF89a": ("gif", "image/gif"),
-}
-
-#Excel uploads
-UPLOAD_EXCEL_DIR = "uploads/excel"
-os.makedirs(
-    UPLOAD_EXCEL_DIR,
-    exist_ok=True
-)
-
-def _sniff_image_type(head: bytes) -> tuple[str, str] | None:
-    for magic, info in _IMAGE_MAGIC_NUMBERS.items():
-        if head.startswith(magic):
-            return info
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return "webp", "image/webp"
-    return None
-
-
-def _public_image_url(path: str | None) -> str:
-    if not path:
-        return settings.fastrr_default_product_image_url
-    if path.startswith("http://") or path.startswith("https://"):
-        return path
-    return settings.public_api_url.rstrip("/") + "/uploads/" + path.lstrip("/")
-
-
-def _delete_local_upload(image_path: str | None) -> None:
-    # Only ever deletes files inside our own uploads dir, and only ones we
-    # generated ourselves (the "products/<uuid>.ext" pattern) -- an admin
-    # who pasted an external image URL into the field never touches disk.
-    if not image_path or not image_path.startswith("products/"):
-        return
-    target = UPLOAD_ROOT / image_path
-    try:
-        resolved = target.resolve()
-        if resolved.is_file() and resolved.is_relative_to(UPLOAD_ROOT.resolve()):
-            resolved.unlink()
-    except OSError:
-        pass  # best-effort cleanup -- never fail the request over this
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -132,32 +59,6 @@ class ChatRequest(BaseModel):
     chatUser: str
     askedQuestion: str
 
-
-class ProductCreate(BaseModel):
-    category_id: int
-    name: str
-    sku: str
-    description: str | None = None
-    price: float
-    discount_price: float | None = None
-    stock: int = 0
-    image: str | None = None
-    featured: bool = False
-    status: bool = True
-
-
-class ProductUpdate(BaseModel):
-    category_id: int | None = None
-    name: str | None = None
-    sku: str | None = None
-    description: str | None = None
-    price: float | None = None
-    discount_price: float | None = None
-    stock: int | None = None
-    image: str | None = None
-    featured: bool | None = None
-    status: bool | None = None
-
 client = Groq(
     api_key=settings.groq_api_key
 )
@@ -175,8 +76,6 @@ def slug(s):
     import re
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
-# Temporary demo storage
-current_file = None
 
 @app.get("/api/health")
 def health():
@@ -435,58 +334,29 @@ def categories(db: Session = Depends(get_db)):
     }
 
 
-def _product_public_out(p: Product) -> dict[str, Any]:
-    return {
-        "id": p.id,
-        "name": p.name,
-        "slug": p.slug,
-        "sku": p.sku,
-        "description": p.description,
-        "price": float(p.price),
-        "discount_price": float(p.discount_price) if p.discount_price else None,
-        "stock": p.stock,
-        "image": _public_image_url(p.image) if p.image else None,
-        "category_id": p.category_id,
-    }
-
-
-def _product_admin_out(p: Product) -> dict[str, Any]:
-    # Everything a shopper sees, plus the fields only the admin panel needs.
-    return {
-        **_product_public_out(p),
-        "featured": p.featured,
-        "status": p.status,
-    }
-
-
 @app.get("/api/products")
-def products(
-    q: str | None = None,
-    category_id: int | None = None,
-    page: int = 1,
-    limit: int = 20,
-    all: bool = False,
-    db: Session = Depends(get_db),
-    current_user: User | None = Depends(get_current_user_optional),
-):
-    # `all=true` only has an effect for an authenticated admin -- everyone
-    # else (including a logged-out shopper, or a regular customer who
-    # happened to pass the flag) still only ever sees active products.
-    show_inactive = all and current_user is not None and current_user.role == "admin"
-
-    query = db.query(Product)
-    if not show_inactive:
-        query = query.filter_by(status=True)
+def products(q: str | None = None, category_id: int | None = None, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
+    query = db.query(Product).filter_by(status=True)
     if q:
         query = query.filter(Product.name.like(f"%{q}%"))
     if category_id:
         query = query.filter(Product.category_id == category_id)
     total = query.count()
     rows = query.offset((page - 1) * limit).limit(min(limit, 100)).all()
-    serialize = _product_admin_out if show_inactive else _product_public_out
     return {
         "status": True,
-        "data": [serialize(p) for p in rows],
+        "data": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "slug": p.slug,
+                "sku": p.sku,
+                "price": float(p.price),
+                "discount_price": float(p.discount_price) if p.discount_price else None,
+                "stock": p.stock,
+            }
+            for p in rows
+        ],
         "pagination": {"page": page, "limit": limit, "total": total},
     }
 
@@ -498,164 +368,21 @@ def product(product_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Product not found")
     return {
         "status": True,
-        "data": _product_public_out(p),
+        "data": {
+            "id": p.id,
+            "name": p.name,
+            "slug": p.slug,
+            "sku": p.sku,
+            "description": p.description,
+            "price": float(p.price),
+            "discount_price": float(p.discount_price) if p.discount_price else None,
+            "stock": p.stock,
+        },
     }
 
 
-def _validate_product_business_rules(p: Product) -> None:
-    if p.price is not None and float(p.price) < 0:
-        raise HTTPException(400, "Price cannot be negative")
-    if p.stock is not None and int(p.stock) < 0:
-        raise HTTPException(400, "Stock cannot be negative")
-    if p.discount_price is not None and float(p.discount_price) >= float(p.price):
-        raise HTTPException(400, "Discount price must be lower than the regular price")
-
-
-def _unique_slug(db: Session, base_name: str, exclude_id: int | None = None) -> str:
-    base = slug(base_name)
-    candidate = base
-    i = 2
-    while True:
-        query = db.query(Product).filter(Product.slug == candidate)
-        if exclude_id is not None:
-            query = query.filter(Product.id != exclude_id)
-        if not query.first():
-            return candidate
-        candidate = f"{base}-{i}"
-        i += 1
-
-
-@app.post("/api/products")
-def create_product(x: ProductCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    if not db.get(Category, x.category_id):
-        raise HTTPException(400, "Invalid category_id")
-    if db.query(Product).filter_by(sku=x.sku).first():
-        raise HTTPException(409, "SKU already exists")
-
-    p = Product(
-        category_id=x.category_id,
-        name=x.name,
-        slug=_unique_slug(db, x.name),
-        sku=x.sku,
-        description=x.description,
-        price=x.price,
-        discount_price=x.discount_price,
-        stock=x.stock,
-        image=x.image,
-        featured=x.featured,
-        status=x.status,
-    )
-    _validate_product_business_rules(p)
-    db.add(p)
-    db.commit()
-    db.refresh(p)
-    return {"status": True, "data": _product_admin_out(p)}
-
-
-@app.put("/api/products/{product_id}")
-def update_product(product_id: int, x: ProductUpdate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    p = db.get(Product, product_id)
-    if not p:
-        raise HTTPException(404, "Product not found")
-
-    data = x.model_dump(exclude_unset=True)
-
-    if "image" in data:
-        # The admin form's image field gets pre-filled with the resolved
-        # absolute URL of the current image (so it's visible/editable).
-        # If it comes back unchanged, keep the original stored value
-        # (which may be a relative "products/<uuid>.ext" path) rather than
-        # overwriting it with the resolved URL -- otherwise we'd lose the
-        # ability to recognize and clean up our own uploaded files later.
-        current_resolved = _public_image_url(p.image) if p.image else None
-        if data["image"] == current_resolved:
-            data.pop("image")
-
-    if "category_id" in data and not db.get(Category, data["category_id"]):
-        raise HTTPException(400, "Invalid category_id")
-
-    if "sku" in data and data["sku"] != p.sku:
-        if db.query(Product).filter(Product.sku == data["sku"], Product.id != p.id).first():
-            raise HTTPException(409, "SKU already exists")
-
-    if "name" in data and data["name"] != p.name:
-        p.slug = _unique_slug(db, data["name"], exclude_id=p.id)
-
-    for key, value in data.items():
-        setattr(p, key, value)
-
-    _validate_product_business_rules(p)
-    db.commit()
-    db.refresh(p)
-    return {"status": True, "data": _product_admin_out(p)}
-
-
-@app.delete("/api/products/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    p = db.get(Product, product_id)
-    if not p:
-        raise HTTPException(404, "Product not found")
-    # Soft delete: products may be referenced by existing orders, so we
-    # deactivate rather than hard-delete. Deactivated products drop out of
-    # /api/products for shoppers but remain visible to admins (all=true)
-    # and can be reactivated by editing the product and re-checking "Active".
-    p.status = False
-    db.commit()
-    return {"status": True, "message": "Product deactivated"}
-
-
-@app.post("/api/products/{product_id}/image")
-async def upload_product_image(
-    product_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    p = db.get(Product, product_id)
-    if not p:
-        raise HTTPException(404, "Product not found")
-
-    contents = await file.read()
-    if not contents:
-        raise HTTPException(400, "Uploaded file is empty")
-    if len(contents) > MAX_UPLOAD_BYTES:
-        raise HTTPException(400, f"Image must be smaller than {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
-
-    sniffed = _sniff_image_type(contents[:16])
-    if sniffed is None:
-        raise HTTPException(400, "Unsupported image type. Use JPEG, PNG, GIF, or WEBP.")
-    ext, _content_type = sniffed
-
-    # Never trust the client-supplied filename -- generate our own.
-    filename = f"{uuid.uuid4().hex}.{ext}"
-    (PRODUCT_UPLOAD_DIR / filename).write_bytes(contents)
-
-    _delete_local_upload(p.image)
-    p.image = f"products/{filename}"
-    db.commit()
-    db.refresh(p)
-    return {"status": True, "data": _product_admin_out(p)}
-
-
-@app.delete("/api/products/{product_id}/image")
-def remove_product_image(
-    product_id: int,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    p = db.get(Product, product_id)
-    if not p:
-        raise HTTPException(404, "Product not found")
-    _delete_local_upload(p.image)
-    p.image = None
-    db.commit()
-    db.refresh(p)
-    return {"status": True, "data": _product_admin_out(p)}
-
-
-
 @app.get("/api/admin/dashboard")
-def admin_dashboard(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+def admin_dashboard(db: Session = Depends(get_db)):
     return {
         "status": True,
         "data": {
@@ -739,6 +466,59 @@ def _fastrr_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     # return data
 
 
+def _product_catalog_data(p: Product) -> dict[str, Any]:
+    price = float(p.discount_price if p.discount_price is not None else p.price)
+    return {
+        "price": price,
+        "name": p.name,
+        "image_url": settings.fastrr_default_product_image_url,
+    }
+
+
+@app.post("/api/fastrr/checkout/start")
+def fastrr_checkout_start(payload: FastrrCheckoutStart, db: Session = Depends(get_db)):
+    """Create a Fastrr checkout session. Secrets stay server-side."""
+    if not payload.items:
+        raise HTTPException(400, "At least one item is required")
+
+    items: list[dict[str, Any]] = []
+    for item in payload.items:
+        quantity = max(1, int(item.quantity))
+        try:
+            product_id = int(item.variant_id)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"Invalid variant_id: {item.variant_id}")
+
+        p = db.get(Product, product_id)
+        if not p or not p.status:
+            raise HTTPException(404, f"Product {product_id} not found")
+        if p.stock < quantity:
+            raise HTTPException(409, f"Only {p.stock} unit(s) available for {p.name}")
+
+        # The custom/ad-hoc Fastrr flow is used here so the checkout price is
+        # resolved from our server-side database and cannot be changed in the browser.
+        items.append(
+            {
+                "variant_id": str(p.id),
+                "quantity": quantity,
+                "catalog_data": _product_catalog_data(p),
+            }
+        )
+
+    checkout_payload = {
+        "cart_data": {
+            "items": items,
+            "custom_attributes": {
+                "source": "favshop-angular",
+            },
+        },
+        "redirect_url": settings.fastrr_redirect_url,
+        "timestamp": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
+    }
+    return _fastrr_post("/api/v1/access-token/checkout", checkout_payload)
+
+
+
 # ---------------------------------------------------------------------------
 # Fastrr / Shiprocket Custom Website Catalog APIs
 # ---------------------------------------------------------------------------
@@ -752,6 +532,15 @@ def _fastrr_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
 # They intentionally do NOT require X-Api-Key unless the Fastrr documentation
 # for your account explicitly requires inbound authentication. The supplied
 # catalog examples only specify GET URLs and query parameters.
+
+def _public_image_url(path: str | None) -> str:
+    if not path:
+        return settings.fastrr_default_product_image_url
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    # For a future public upload endpoint. Do not expose local filesystem paths.
+    return settings.public_api_url.rstrip("/") + "/uploads/" + path.lstrip("/")
+
 
 def _fastrr_product_id(product_id: int) -> int:
     # Stable, unique Long-style numeric ID for Fastrr.
@@ -784,7 +573,10 @@ def _category_id_from_fastrr_collection_id(collection_id: int) -> int | None:
 
 
 def _product_image_url(p: Product) -> str:
-    return _public_image_url(p.image)
+    # Current schema has no product_images table. Use configured fallback.
+    # When an image column/table is added, this helper is the only place
+    # that needs changing.
+    return settings.fastrr_default_product_image_url
 
 
 def _fastrr_product(p: Product) -> dict[str, Any]:
@@ -982,146 +774,6 @@ def fastrr_checkout_start(
         checkout_payload,
     )
 
-@app.post("/api/admin/sales/upload")
-async def upload_sales_excel(
-    file: UploadFile = File(...)
-):
-
-    global current_file
-
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="File is required."
-        )
-
-    extension = os.path.splitext(
-        file.filename
-    )[1].lower()
-
-    if extension not in [".xlsx", ".xls"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Only Excel files are allowed."
-        )
-
-    file_id = str(uuid.uuid4())
-
-    filename = f"{file_id}{extension}"
-
-    file_path = os.path.join(
-        UPLOAD_EXCEL_DIR,
-        filename
-    )
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(
-            file.file,
-            buffer
-        )
-
-    try:
-
-        df = load_excel(file_path)
-
-        if df.empty:
-            raise HTTPException(
-                status_code=400,
-                detail="Excel file is empty."
-            )
-
-        current_file = file_path
-
-        return {
-            "message": "Excel uploaded successfully.",
-            "filename": file.filename,
-            "columns": df.columns.tolist(),
-            "rows": len(df)
-        }
-
-    except Exception as e:
-
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
-
-@app.get("/api/admin/sales/schema")
-async def sales_schema():
-
-    if not current_file:
-        raise HTTPException(
-            status_code=404,
-            detail="No Excel file uploaded."
-        )
-
-    df = load_excel(current_file)
-
-    return get_schema(df)
-
-
-@app.post("/api/admin/sales/analyze")
-async def analyze_sales_data(
-    request: SalesQuestion
-):
-
-    if not current_file:
-        raise HTTPException(
-            status_code=404,
-            detail="Please upload an Excel file first."
-        )
-
-    try:
-
-        df = load_excel(current_file)
-
-        # Ask LLM what analysis is required
-        instruction = await understand_question(
-            request.question,
-            df.columns.tolist()
-        )
-
-        operation = instruction.get(
-            "operation"
-        )
-
-        column = instruction.get(
-            "column"
-        )
-
-        group_by = instruction.get(
-            "group_by"
-        )
-
-        limit = instruction.get(
-            "limit",
-            5
-        )
-
-        # Validate and execute with Pandas
-        result = analyze_sales(
-            df=df,
-            operation=operation,
-            column=column,
-            group_by=group_by,
-            limit=limit
-        )
-
-        return {
-            "question": request.question,
-            "operation": operation,
-            "result": result
-        }
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
 @app.get("/docs-info")
 def docs_info():
     return {"swagger": "/docs", "redoc": "/redoc"}

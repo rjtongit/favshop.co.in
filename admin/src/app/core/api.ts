@@ -1,2 +1,2 @@
-// export const API='http://localhost:8080/api';
-export const API = '/api';
+export const API='http://localhost:8000/api';
+// export const API = '/api';

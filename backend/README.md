@@ -1,4 +1,5 @@
 # FavShop FastAPI Backend - Fastrr Updated
+(Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& c:\Users\Rajat\favshopFastAPI\.venv\Scripts\Activate.ps1)   
 
 This package is an update of the previously working backend. The original project structure and dependencies are preserved.
 

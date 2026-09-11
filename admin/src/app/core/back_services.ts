@@ -35,13 +35,11 @@ export class AdminApiService{
  private http=inject(HttpClient);
 
  dashboard(){return this.http.get<any>(API+'/admin/dashboard')}
- products(params:any={}){return this.http.get<any>(API+'/products',{params:{...params,all:true}})}
+ products(params:any={}){return this.http.get<any>(API+'/products',{params})}
  product(id:number){return this.http.get<any>(API+'/products/'+id)}
  createProduct(x:any){return this.http.post<any>(API+'/products',x)}
  updateProduct(id:number,x:any){return this.http.put<any>(API+'/products/'+id,x)}
  deleteProduct(id:number){return this.http.delete<any>(API+'/products/'+id)}
- uploadProductImage(id:number,file:File){const fd=new FormData();fd.append('file',file);return this.http.post<any>(API+'/products/'+id+'/image',fd)}
- removeProductImage(id:number){return this.http.delete<any>(API+'/products/'+id+'/image')}
 
  categories(){return this.http.get<any>(API+'/categories')}
  createCategory(x:any){return this.http.post<any>(API+'/categories',x)}

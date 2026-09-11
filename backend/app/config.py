@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     )
 
     public_api_url: str = "http://localhost:8000"
+    # public_api_url: str = "http://localhost:8080"
 
     model_config = SettingsConfigDict(
         env_file=".env",
